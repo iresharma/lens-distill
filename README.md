@@ -1,36 +1,58 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Lens Distill
 
-## Getting Started
+Portfolio demo: upload a PDF and an `extract.md` persona, run a real book-distillation pipeline, and inspect claims, concepts, a concept graph, and claim-embedding clusters.
 
-First, run the development server:
-
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+```
+chunk → embed → extract → dedupe → canonicalize → concepts → concept_graph
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Drain starts automatically after upload (`after()` + chained continue). No cron worker, no manual stage-advance UI. The PDF is parsed then discarded — only paragraphs and derived artifacts are stored.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Cost / quota
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+- Runs call Anthropic (Haiku / Sonnet / Opus) and OpenRouter embeddings.
+- **Global limit: 3 accepted books per rolling week** for the whole site.
+- Upload requires an explicit cost acknowledgment.
+- Guards: PDF ≤ 25 MB, chapters 5–40, ≤ ~550 chunks.
 
-## Learn More
+## Prompt injection
 
-To learn more about Next.js, take a look at the following resources:
+User personas are treated as an untrusted **topic lens**:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- Fixed outer system prompt (not user-editable)
+- Persona fenced in `<persona>…</persona>`
+- Soft deny-list for override phrases
+- Forced `emit_claims` tool + citation range checks in code
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Setup
 
-## Deploy on Vercel
+```bash
+cp .env.example .env.local
+# fill DATABASE_URL, DATABASE_URL_UNPOOLED, ANTHROPIC_API_KEY, OPENROUTER_API_KEY
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+npm install
+# On Neon once:
+#   CREATE EXTENSION IF NOT EXISTS vector;
+npx drizzle-kit push
+npm run dev   # http://localhost:3001
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+If a drain chain dies mid-book:
+
+```bash
+npm run resume
+```
+
+## UI
+
+| Surface | What it shows |
+|---|---|
+| Home | Gallery, stats, upload |
+| Timeline | Per-stage metrics from `stage_runs` |
+| Concepts / Claims | Nodes + expandable real citations |
+| Graph | Force-directed concept graph |
+| Embeddings | 2D PCA scatter; click → top-6 cosine neighbors (HNSW) |
+
+## Stack
+
+Next.js · Drizzle · Neon + pgvector · Anthropic · OpenRouter · pdfjs · D3
