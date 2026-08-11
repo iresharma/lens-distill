@@ -1,6 +1,11 @@
 import { eq, sql } from "drizzle-orm";
 import { jobs, type Job, type NewJob } from "@/db/schema";
 import type { WorkerDb } from "@/db";
+import { classifyApiLimitError } from "@/lib/llm/api-errors";
+import {
+  forceOpenRouterFallback,
+  getAnthropicTransport,
+} from "@/lib/llm/client";
 
 const MAX_ATTEMPTS = 3;
 
@@ -43,11 +48,51 @@ export async function completeJob(
   });
 }
 
-export async function failJob(wdb: WorkerDb, job: Job, err: unknown) {
+export async function failJob(
+  wdb: WorkerDb,
+  job: Job,
+  err: unknown,
+): Promise<{ bookFailed: boolean }> {
   const msg =
     err instanceof Error ? `${err.name}: ${err.message}` : String(err);
-  const dead = job.attempts >= MAX_ATTEMPTS;
-  const backoff = 2 ** job.attempts * 30;
+  const limit = classifyApiLimitError(err);
+
+  // Anthropic usage cap + OpenRouter available → switch transport and retry
+  // soon instead of burning the job dead.
+  if (
+    limit?.kind === "usage_cap" &&
+    process.env.OPENROUTER_API_KEY &&
+    getAnthropicTransport() === "direct"
+  ) {
+    forceOpenRouterFallback(
+      `Anthropic usage-capped — switched to OpenRouter`,
+      limit.regainAt,
+    );
+    await wdb
+      .update(jobs)
+      .set({
+        status: "pending",
+        lockedAt: null,
+        lastError: `${msg} → retrying via OpenRouter`,
+        // Don't count this against attempts — provider path changed.
+        attempts: sql`GREATEST(${jobs.attempts} - 1, 0)`,
+        runAfter: sql`now() + interval '5 seconds'`,
+      })
+      .where(eq(jobs.id, job.id));
+    return { bookFailed: false };
+  }
+
+  // Already on OpenRouter (or no fallback) and still usage-capped → fail loud.
+  const dead =
+    (limit?.kind === "usage_cap" && !process.env.OPENROUTER_API_KEY) ||
+    (limit?.kind === "usage_cap" && getAnthropicTransport() === "openrouter") ||
+    job.attempts >= MAX_ATTEMPTS;
+
+  const backoff =
+    limit?.kind === "rate_limit" || limit?.kind === "overloaded"
+      ? Math.min(2 ** job.attempts * 120, 900)
+      : 2 ** job.attempts * 30;
+
   await wdb
     .update(jobs)
     .set({
@@ -57,6 +102,8 @@ export async function failJob(wdb: WorkerDb, job: Job, err: unknown) {
       runAfter: sql`now() + (${backoff} * interval '1 second')`,
     })
     .where(eq(jobs.id, job.id));
+
+  return { bookFailed: dead };
 }
 
 export async function recoverStale(wdb: WorkerDb) {

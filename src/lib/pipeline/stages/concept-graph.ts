@@ -6,7 +6,7 @@ import {
   type ConfusablePair,
   type NewJob,
 } from "@/db/schema";
-import { anthropic, MODELS } from "@/lib/llm/client";
+import { claudeMessages, getClaudeClient } from "@/lib/llm/client";
 import { requireToolUse } from "@/lib/llm/require-tool";
 import { emitConceptGraph } from "@/lib/llm/tools";
 import { loadPrompt } from "@/lib/llm/prompts/load";
@@ -108,7 +108,7 @@ export const conceptGraphStage: StageHandler = async (job, wdb) => {
     .from(concepts)
     .where(eq(concepts.bookId, bookId));
 
-  if (nodes.length < 5) {
+  if (nodes.length < 1) {
     throw new Error(
       `concept_graph: only ${nodes.length} concepts — concepts stage likely failed`,
     );
@@ -126,9 +126,9 @@ export const conceptGraphStage: StageHandler = async (job, wdb) => {
     )
     .join("\n");
 
-  const client = anthropic();
-  const res = await client.messages.create({
-    model: MODELS.concepts,
+  const { models } = await getClaudeClient();
+  const res = await claudeMessages({
+    model: models.concepts,
     max_tokens: 16000,
     system: loadPrompt("concept-graph"),
     tools: [emitConceptGraph],
@@ -141,11 +141,12 @@ export const conceptGraphStage: StageHandler = async (job, wdb) => {
     ],
   });
 
+  const { models: activeModels } = await getClaudeClient();
   await recordStageUsage(
     wdb,
     bookId,
     "concept_graph",
-    MODELS.concepts,
+    activeModels.concepts,
     res.usage?.input_tokens ?? 0,
     res.usage?.output_tokens ?? 0,
     1,
@@ -275,7 +276,7 @@ export const conceptGraphStage: StageHandler = async (job, wdb) => {
     edgeCounts: counts,
     coveragePct: Math.round(pct),
     cyclesBroken,
-    model: MODELS.concepts,
+    model: activeModels.concepts,
     conceptCount: nodes.length,
   });
 

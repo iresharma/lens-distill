@@ -7,6 +7,7 @@ import {
   ConceptGlyph,
   EdgeGlyph,
 } from "@/components/BrandMark";
+import { ApiLimitsBar } from "@/components/ApiLimitsBar";
 import { PipelineStrip } from "@/components/PipelineStrip";
 import { UploadForm } from "@/components/UploadForm";
 import { db } from "@/db";
@@ -137,8 +138,9 @@ export default async function HomePage() {
           </span>
         </div>
 
-        <div className="mt-12">
+        <div className="mt-12 space-y-4">
           <PipelineStrip />
+          <ApiLimitsBar />
         </div>
       </section>
 

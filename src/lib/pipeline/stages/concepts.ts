@@ -4,7 +4,19 @@ import { pickConceptDescription } from "@/lib/concept-description";
 import { markStageDone, markStageRunning } from "../stage-runs";
 import type { StageHandler } from "../types";
 
-const MIN_CLAIMS = 8;
+const MIN_CLAIMS_BOOK = 8;
+/** Short PDFs (workshops, essays) rarely clear 8 — scale down honestly. */
+const MIN_CLAIMS_SHORT = 3;
+const SHORT_CORPUS = 150;
+const MIN_NODES_BOOK = 5;
+const MIN_NODES_SHORT = 1;
+
+function thresholdsFor(liveClaims: number) {
+  if (liveClaims < SHORT_CORPUS) {
+    return { minClaims: MIN_CLAIMS_SHORT, minNodes: MIN_NODES_SHORT };
+  }
+  return { minClaims: MIN_CLAIMS_BOOK, minNodes: MIN_NODES_BOOK };
+}
 
 function slug(s: string) {
   return s
@@ -135,12 +147,14 @@ export const conceptsStage: StageHandler = async (job, wdb) => {
     }
   }
 
+  const { minClaims, minNodes } = thresholdsFor(rows.length);
+
   const tagsAbove = [...groups.values()].filter(
-    (g) => g.claimIds.length >= MIN_CLAIMS,
+    (g) => g.claimIds.length >= minClaims,
   ).length;
 
   const values = [...groups.entries()]
-    .filter(([, g]) => g.claimIds.length >= MIN_CLAIMS)
+    .filter(([, g]) => g.claimIds.length >= minClaims)
     .map(([id, g]) => {
       const favors =
         (modeValue(g.favors) as typeof concepts.$inferInsert.favors) ??
@@ -161,9 +175,9 @@ export const conceptsStage: StageHandler = async (job, wdb) => {
     })
     .sort((a, b) => b.claimIds.length - a.claimIds.length);
 
-  if (values.length < 5) {
+  if (values.length < minNodes) {
     throw new Error(
-      `concepts: only ${values.length} nodes with ≥${MIN_CLAIMS} claims — canonicalize/extract likely broken`,
+      `concepts: only ${values.length} nodes with ≥${minClaims} claims (${rows.length} live) — canonicalize/extract likely broken`,
     );
   }
 
@@ -178,7 +192,9 @@ export const conceptsStage: StageHandler = async (job, wdb) => {
     distinctTags: groups.size,
     tagsAboveThreshold: tagsAbove,
     conceptNodes: values.length,
-    minClaims: MIN_CLAIMS,
+    minClaims,
+    minNodes,
+    liveClaims: rows.length,
   });
 
   return {

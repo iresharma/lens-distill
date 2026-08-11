@@ -59,6 +59,7 @@ export function BookClient({ bookId }: { bookId: string }) {
     }[];
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [resuming, setResuming] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -107,6 +108,27 @@ export function BookClient({ bookId }: { bookId: string }) {
     });
   }
 
+  async function resumeThisBook() {
+    setResuming(true);
+    try {
+      const res = await fetch("/api/pipeline/resume", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bookIds: [bookId] }),
+      });
+      if (!res.ok) {
+        const d = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(d.error || `Resume failed (${res.status})`);
+        return;
+      }
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Resume failed");
+    } finally {
+      setResuming(false);
+    }
+  }
+
   if (error) {
     return (
       <div className="space-y-3">
@@ -150,9 +172,21 @@ export function BookClient({ bookId }: { bookId: string }) {
         </h1>
         <p className="mt-1 text-white/50">{data.book.authors.join(", ")}</p>
         {data.book.statusError ? (
-          <p className="mt-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">
-            {data.book.statusError}
-          </p>
+          <div className="mt-3 space-y-2">
+            <p className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">
+              {data.book.statusError}
+            </p>
+            {data.book.status === "failed" ? (
+              <button
+                type="button"
+                disabled={resuming}
+                onClick={() => void resumeThisBook()}
+                className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-[#0a0a0b] disabled:opacity-50"
+              >
+                {resuming ? "Resuming…" : "Resume this book →"}
+              </button>
+            ) : null}
+          </div>
         ) : null}
       </div>
 
@@ -206,10 +240,14 @@ export function BookClient({ bookId }: { bookId: string }) {
               Stage timeline
             </p>
             <p className="mb-4 text-sm text-white/50">
-              Observe-only. No manual advance — drain continues from upload.
+              {data.book.status === "failed"
+                ? "Pipeline stopped — use Resume above after fixing API limits."
+                : "Observe-only while running — drain continues from upload or Resume."}
               {pipelineLive
                 ? " Counts refresh every few seconds while running."
-                : " Pipeline finished — live refresh stopped."}
+                : data.book.status === "ready"
+                  ? " Pipeline finished — live refresh stopped."
+                  : ""}
             </p>
             <DistillTimeline stages={data.timeline} />
           </div>

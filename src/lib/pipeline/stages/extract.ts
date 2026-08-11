@@ -1,7 +1,7 @@
 import { and, asc, between, eq, gte, sql } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import { books, claims, chunks, paragraphs, type NewJob } from "@/db/schema";
-import { anthropic, MODELS } from "@/lib/llm/client";
+import { getClaudeClient, claudeMessages } from "@/lib/llm/client";
 import { requireToolUse } from "@/lib/llm/require-tool";
 import { emitClaims } from "@/lib/llm/tools";
 import {
@@ -53,16 +53,17 @@ export const extractStage: StageHandler = async (job, wdb, deadline) => {
       .select({ kept: sql<number>`count(*)::int` })
       .from(claims)
       .where(eq(claims.bookId, bookId));
+    const { models } = await getClaudeClient();
     await markStageDone(wdb, bookId, "extract", {
       claimsKept: kept,
-      model: MODELS.extract,
+      model: models.extract,
       concurrency: CONCURRENCY,
     });
     return { bookId, stage: "dedupe", payload: {} } satisfies NewJob;
   }
 
   const system = buildExtractSystemPrompt();
-  const client = anthropic();
+  const { models } = await getClaudeClient();
   let dropped = 0;
   let kept = 0;
 
@@ -91,8 +92,8 @@ export const extractStage: StageHandler = async (job, wdb, deadline) => {
           .map((p) => `[p${p.paraIndex}] ${p.text}`)
           .join("\n\n");
 
-        const res = await client.messages.create({
-          model: MODELS.extract,
+        const res = await claudeMessages({
+          model: models.extract,
           max_tokens: 4096,
           system,
           tools: [emitClaims],
@@ -152,12 +153,14 @@ export const extractStage: StageHandler = async (job, wdb, deadline) => {
   const usageOut = workerStats.reduce((n, s) => n + s.usageOut, 0);
   const usageCalls = workerStats.reduce((n, s) => n + s.usageCalls, 0);
 
+  // Re-read models in case mid-batch fallback switched transport.
+  const { models: activeModels } = await getClaudeClient();
   if (usageCalls) {
     await recordStageUsage(
       wdb,
       bookId,
       "extract",
-      MODELS.extract,
+      activeModels.extract,
       usageIn,
       usageOut,
       usageCalls,
@@ -171,7 +174,7 @@ export const extractStage: StageHandler = async (job, wdb, deadline) => {
     claimsDroppedBatch: dropped,
     dropRateBatch:
       Math.round((dropped / Math.max(kept + dropped, 1)) * 1000) / 10,
-    model: MODELS.extract,
+    model: activeModels.extract,
     concurrency: CONCURRENCY,
   });
 
@@ -199,7 +202,7 @@ export const extractStage: StageHandler = async (job, wdb, deadline) => {
   await markStageDone(wdb, bookId, "extract", {
     claimsKept: total,
     claimsDroppedApprox: dropped,
-    model: MODELS.extract,
+    model: activeModels.extract,
     concurrency: CONCURRENCY,
   });
 

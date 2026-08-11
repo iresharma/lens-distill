@@ -1,3 +1,4 @@
+import { resolveAnthropicTransport } from "@/lib/llm/client";
 import { eq } from "drizzle-orm";
 import { books, jobs, type PipelineStage } from "@/db/schema";
 import { makeWorkerDb } from "@/db";
@@ -32,6 +33,12 @@ export async function drainPipeline(opts?: {
   let needsContinue = false;
 
   try {
+    // Pick Claude path once per drain (cached 5m) — auto OpenRouter on cap.
+    const decision = await resolveAnthropicTransport();
+    console.log(
+      `[pipeline] Claude transport=${decision.transport} (${decision.reason})`,
+    );
+
     await recoverStale(wdb);
     while (Date.now() < deadline - 45_000) {
       const job = await claimJob(wdb);
@@ -48,10 +55,10 @@ export async function drainPipeline(opts?: {
           next: next?.stage ?? null,
         });
       } catch (e) {
-        await failJob(wdb, job, e);
+        const { bookFailed } = await failJob(wdb, job, e);
         const msg = e instanceof Error ? e.message : String(e);
         await markStageFailed(wdb, job.bookId, job.stage as PipelineStage, msg);
-        if (job.attempts >= 3) {
+        if (bookFailed) {
           await wdb
             .update(books)
             .set({ status: "failed", statusError: msg })

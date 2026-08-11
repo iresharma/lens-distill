@@ -1,6 +1,6 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { claims, type Claim, type NewJob } from "@/db/schema";
-import { anthropic, embedTexts, MODELS } from "@/lib/llm/client";
+import { claudeMessages, embedTexts, getClaudeClient } from "@/lib/llm/client";
 import { emitMerge } from "@/lib/llm/tools";
 import { loadPrompt } from "@/lib/llm/prompts/load";
 import { requireToolUse } from "@/lib/llm/require-tool";
@@ -347,11 +347,12 @@ export const dedupeStage: StageHandler = async (job, wdb, deadline) => {
 
     const texts = missing.map((c) => c.statement);
     const { vectors, inputTokens } = await embedTexts(texts);
+    const { models } = await getClaudeClient();
     await recordStageUsage(
       wdb,
       bookId,
       "dedupe",
-      MODELS.embed,
+      models.embed,
       inputTokens,
       0,
       1,
@@ -432,7 +433,7 @@ export const dedupeStage: StageHandler = async (job, wdb, deadline) => {
   // Phase C: parallel Sonnet merges for borderline clusters
   let llmMerges = 0;
   if (needsLlm.length && Date.now() < deadline - 25_000) {
-    const client = anthropic();
+    const { models } = await getClaudeClient();
     const system = loadPrompt("merge");
     const batch = needsLlm.slice(0, LLM_MERGE_BATCH);
     const queue = [...batch];
@@ -442,8 +443,8 @@ export const dedupeStage: StageHandler = async (job, wdb, deadline) => {
         const cluster = queue.shift();
         if (!cluster) return;
 
-        const res = await client.messages.create({
-          model: MODELS.merge,
+        const res = await claudeMessages({
+          model: models.merge,
           max_tokens: 1024,
           system,
           tools: [emitMerge],
@@ -458,11 +459,12 @@ export const dedupeStage: StageHandler = async (job, wdb, deadline) => {
           ],
         });
 
+        const { models: active } = await getClaudeClient();
         await recordStageUsage(
           wdb,
           bookId,
           "dedupe",
-          MODELS.merge,
+          active.merge,
           res.usage?.input_tokens ?? 0,
           res.usage?.output_tokens ?? 0,
           1,
@@ -490,6 +492,7 @@ export const dedupeStage: StageHandler = async (job, wdb, deadline) => {
   }
 
   const prev = await readMetrics(wdb, bookId);
+  const { models: mergeModels } = await getClaudeClient();
   await patchStageMetrics(wdb, bookId, "dedupe", {
     autoMergesTotal: Number(prev.autoMergesTotal ?? 0) + autoMerges,
     llmMergesTotal: Number(prev.llmMergesTotal ?? 0) + llmMerges,
@@ -501,7 +504,7 @@ export const dedupeStage: StageHandler = async (job, wdb, deadline) => {
     },
     simThreshold: SIM_THRESHOLD,
     autoMergeThreshold: AUTO_MERGE_THRESHOLD,
-    model: MODELS.merge,
+    model: mergeModels.merge,
   });
 
   // More borderline clusters left?
@@ -543,12 +546,13 @@ export const dedupeStage: StageHandler = async (job, wdb, deadline) => {
 
   const proj = await assignClustersAndProject(wdb, bookId);
   const latest = await readMetrics(wdb, bookId);
+  const { models: doneModels } = await getClaudeClient();
   await finishDedupe(wdb, bookId, {
     simThreshold: SIM_THRESHOLD,
     autoMergeThreshold: AUTO_MERGE_THRESHOLD,
     autoMergesTotal: Number(latest.autoMergesTotal ?? 0),
     llmMergesTotal: Number(latest.llmMergesTotal ?? 0),
-    model: MODELS.merge,
+    model: doneModels.merge,
     ...proj,
   });
 
