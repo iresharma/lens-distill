@@ -28,14 +28,18 @@ User personas are treated as an untrusted **topic lens**:
 
 ```bash
 cp .env.example .env.local
-# fill DATABASE_URL, DATABASE_URL_UNPOOLED, ANTHROPIC_API_KEY, OPENROUTER_API_KEY
+# fill DATABASE_URL, ANTHROPIC_API_KEY, OPENROUTER_API_KEY
 
 npm install
-# On Neon once:
-#   CREATE EXTENSION IF NOT EXISTS vector;
-npx drizzle-kit push
-npm run dev   # http://localhost:3001
+npm run db:migrate   # creates the vector extension, tables, and indexes
+npm run dev           # http://localhost:3001
 ```
+
+Any Postgres server works, as long as the `pgvector` extension is installable
+(the migration runs `CREATE EXTENSION IF NOT EXISTS vector` itself). The
+Docker image runs the same migrations automatically on container startup —
+see `scripts/migrate.mjs` / `scripts/docker-entrypoint.sh` — so a fresh
+database gets its schema created on first boot with no manual step.
 
 If a drain chain dies mid-book:
 
@@ -55,4 +59,4 @@ npm run resume
 
 ## Stack
 
-Next.js · Drizzle · Neon + pgvector · Anthropic · OpenRouter · pdfjs · D3
+Next.js · Drizzle · Postgres + pgvector · Anthropic · OpenRouter · pdfjs · D3

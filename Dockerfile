@@ -35,9 +35,19 @@ RUN addgroup --system --gid 1001 nodejs \
 COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+COPY --from=builder --chown=nextjs:nodejs /app/drizzle ./drizzle
+COPY --from=builder --chown=nextjs:nodejs /app/scripts/migrate.mjs ./scripts/migrate.mjs
+COPY --from=builder --chown=nextjs:nodejs /app/scripts/docker-entrypoint.sh ./scripts/docker-entrypoint.sh
+# Next's output tracing only bundles the drizzle-orm submodules the app code
+# imports, which excludes the migrator used by migrate.mjs. Overwrite with
+# the full package from the untraced `deps` install so it's all present.
+COPY --from=deps --chown=nextjs:nodejs /app/node_modules/drizzle-orm ./node_modules/drizzle-orm
+RUN chmod +x ./scripts/docker-entrypoint.sh
 
 USER nextjs
 
 EXPOSE 3000
 
-CMD ["node", "server.js"]
+# Applies pending Drizzle migrations (creating tables/extensions that don't
+# exist yet) before starting the server.
+CMD ["./scripts/docker-entrypoint.sh"]

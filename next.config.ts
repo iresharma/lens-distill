@@ -4,8 +4,8 @@ const nextConfig: NextConfig = {
   output: "standalone",
   reactCompiler: true,
   serverExternalPackages: [
-    "@neondatabase/serverless",
-    "ws",
+    "pg",
+    "drizzle-orm",
     "pdfjs-dist",
     "js-tiktoken",
     "@opentelemetry/sdk-node",
