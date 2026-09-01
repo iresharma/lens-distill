@@ -5,6 +5,7 @@ const nextConfig: NextConfig = {
   reactCompiler: true,
   serverExternalPackages: [
     "pg",
+    "drizzle-orm",
     "pdfjs-dist",
     "js-tiktoken",
     "@opentelemetry/sdk-node",

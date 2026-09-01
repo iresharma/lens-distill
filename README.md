@@ -31,11 +31,15 @@ cp .env.example .env.local
 # fill DATABASE_URL, ANTHROPIC_API_KEY, OPENROUTER_API_KEY
 
 npm install
-# Any Postgres server works, as long as pgvector is available. Once, on that server:
-#   CREATE EXTENSION IF NOT EXISTS vector;
-npx drizzle-kit push
-npm run dev   # http://localhost:3001
+npm run db:migrate   # creates the vector extension, tables, and indexes
+npm run dev           # http://localhost:3001
 ```
+
+Any Postgres server works, as long as the `pgvector` extension is installable
+(the migration runs `CREATE EXTENSION IF NOT EXISTS vector` itself). The
+Docker image runs the same migrations automatically on container startup —
+see `scripts/migrate.mjs` / `scripts/docker-entrypoint.sh` — so a fresh
+database gets its schema created on first boot with no manual step.
 
 If a drain chain dies mid-book:
 
