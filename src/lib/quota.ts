@@ -1,6 +1,8 @@
 import { gte, sql } from "drizzle-orm";
 import { quotaEvents } from "@/db/schema";
 import { db } from "@/db";
+import { otelLog } from "@/lib/otel/logger";
+import { quotaExceededCount } from "@/lib/otel/meter";
 
 export const WEEKLY_BOOK_LIMIT = 3;
 
@@ -44,6 +46,8 @@ export async function assertAndRecordQuota(
   `);
   const used = Number((res.rows[0] as { n: number }).n);
   if (used >= WEEKLY_BOOK_LIMIT) {
+    otelLog.warn("quota exceeded", { scope: "pipeline", used, limit: WEEKLY_BOOK_LIMIT });
+    quotaExceededCount.add(1);
     throw new QuotaExceededError(used);
   }
   await tx.insert(quotaEvents).values({ bookId });

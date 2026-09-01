@@ -6,6 +6,13 @@ import {
   forceOpenRouterFallback,
   getAnthropicTransport,
 } from "@/lib/llm/client";
+import { otelLog } from "@/lib/otel/logger";
+import {
+  jobsFailed,
+  jobsDeadlettered,
+  queueDepth,
+  llmFallbackCount,
+} from "@/lib/otel/meter";
 
 const MAX_ATTEMPTS = 3;
 
@@ -38,6 +45,7 @@ export async function completeJob(
   wdb: WorkerDb,
   id: number,
   next: NewJob | null,
+  stage?: string,
 ) {
   await wdb.transaction(async (tx) => {
     await tx
@@ -46,6 +54,8 @@ export async function completeJob(
       .where(eq(jobs.id, id));
     if (next) await tx.insert(jobs).values(next);
   });
+  queueDepth.add(-1, stage ? { stage } : {});
+  if (next) queueDepth.add(1, { stage: next.stage });
 }
 
 export async function failJob(
@@ -56,6 +66,7 @@ export async function failJob(
   const msg =
     err instanceof Error ? `${err.name}: ${err.message}` : String(err);
   const limit = classifyApiLimitError(err);
+  jobsFailed.add(1, { stage: job.stage, "error.kind": limit?.kind ?? "unknown" });
 
   // Anthropic usage cap + OpenRouter available → switch transport and retry
   // soon instead of burning the job dead.
@@ -64,6 +75,13 @@ export async function failJob(
     process.env.OPENROUTER_API_KEY &&
     getAnthropicTransport() === "direct"
   ) {
+    otelLog.warn("usage cap hit, switching to OpenRouter", {
+      scope: "pipeline",
+      bookId: job.bookId,
+      jobId: job.id,
+      regainAt: limit.regainAt,
+    });
+    llmFallbackCount.add(1, { reason: "job_retry" });
     forceOpenRouterFallback(
       `Anthropic usage-capped — switched to OpenRouter`,
       limit.regainAt,
@@ -93,6 +111,29 @@ export async function failJob(
       ? Math.min(2 ** job.attempts * 120, 900)
       : 2 ** job.attempts * 30;
 
+  if (dead) {
+    otelLog.error("job dead-lettered", {
+      scope: "pipeline",
+      bookId: job.bookId,
+      stage: job.stage,
+      jobId: job.id,
+      "error.kind": limit?.kind ?? "unknown",
+      lastError: msg,
+    });
+    jobsDeadlettered.add(1, { stage: job.stage, "error.kind": limit?.kind ?? "unknown" });
+    queueDepth.add(-1, { stage: job.stage });
+  } else {
+    otelLog.warn("job failed, will retry", {
+      scope: "pipeline",
+      bookId: job.bookId,
+      stage: job.stage,
+      jobId: job.id,
+      attempts: job.attempts,
+      "error.kind": limit?.kind ?? "unknown",
+      backoffSeconds: backoff,
+    });
+  }
+
   await wdb
     .update(jobs)
     .set({
@@ -119,4 +160,5 @@ export async function recoverStale(wdb: WorkerDb) {
 
 export async function enqueueJob(wdb: WorkerDb, job: NewJob) {
   await wdb.insert(jobs).values(job);
+  queueDepth.add(1, { stage: job.stage });
 }

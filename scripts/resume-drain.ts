@@ -4,6 +4,7 @@ import { makeWorkerDb } from "../src/db";
 import { jobs } from "../src/db/schema";
 import { drainPipeline } from "../src/lib/pipeline/drain";
 import { resetFailedJobs } from "../src/lib/pipeline/resume";
+import { startOtel, shutdownOtel } from "../src/lib/otel/sdk";
 
 async function hasPending(): Promise<boolean> {
   const { pool, wdb } = makeWorkerDb();
@@ -20,6 +21,8 @@ async function hasPending(): Promise<boolean> {
 }
 
 async function main() {
+  await startOtel();
+
   const reset = await resetFailedJobs();
   console.log(JSON.stringify({ reset }, null, 2));
 
@@ -59,8 +62,12 @@ async function main() {
 }
 
 main()
-  .then(() => process.exit(0))
-  .catch((e) => {
+  .then(async () => {
+    await shutdownOtel();
+    process.exit(0);
+  })
+  .catch(async (e) => {
     console.error(e);
+    await shutdownOtel();
     process.exit(1);
   });
