@@ -1,6 +1,8 @@
 import { and, eq } from "drizzle-orm";
 import { stageRuns, type PipelineStage } from "@/db/schema";
 import type { WorkerDb } from "@/db";
+import { otelLog } from "@/lib/otel/logger";
+import { stageDuration, stageFailed } from "@/lib/otel/meter";
 
 export async function markStageRunning(
   wdb: WorkerDb,
@@ -53,12 +55,15 @@ export async function markStageDone(
     else merged[k] = v;
   }
 
+  const finishedAt = new Date();
+  const startedAt = existing[0]?.startedAt ?? finishedAt;
+
   if (existing[0]) {
     await wdb
       .update(stageRuns)
       .set({
         status: "done",
-        finishedAt: new Date(),
+        finishedAt,
         metrics: merged,
         error: null,
       })
@@ -68,11 +73,13 @@ export async function markStageDone(
       bookId,
       stage,
       status: "done",
-      startedAt: new Date(),
-      finishedAt: new Date(),
+      startedAt: finishedAt,
+      finishedAt,
       metrics: merged,
     });
   }
+
+  stageDuration.record(finishedAt.getTime() - startedAt.getTime(), { stage });
 }
 
 export async function markStageFailed(
@@ -103,6 +110,9 @@ export async function markStageFailed(
       error,
     });
   }
+
+  otelLog.error("stage failed", { scope: "pipeline", bookId, stage, error });
+  stageFailed.add(1, { stage });
 }
 
 export async function patchStageMetrics(

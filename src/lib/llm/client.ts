@@ -1,6 +1,39 @@
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 import { classifyApiLimitError } from "@/lib/llm/api-errors";
+import { withSpan } from "@/lib/otel/tracer";
+import { otelLog } from "@/lib/otel/logger";
+import { llmFallbackCount, llmCallDuration, genAiTokenUsage } from "@/lib/otel/meter";
+import {
+  ATTR_GEN_AI_SYSTEM,
+  ATTR_GEN_AI_REQUEST_MODEL,
+  ATTR_GEN_AI_RESPONSE_MODEL,
+  ATTR_GEN_AI_TOKEN_TYPE,
+} from "@opentelemetry/semantic-conventions/incubating";
+
+function recordLlmMetrics(
+  durationMs: number,
+  system: string,
+  model: string,
+  inputTokens?: number,
+  outputTokens?: number,
+) {
+  llmCallDuration.record(durationMs, { "gen_ai.system": system, "gen_ai.request.model": model });
+  if (inputTokens != null) {
+    genAiTokenUsage.record(inputTokens, {
+      "gen_ai.system": system,
+      "gen_ai.request.model": model,
+      [ATTR_GEN_AI_TOKEN_TYPE]: "input",
+    });
+  }
+  if (outputTokens != null) {
+    genAiTokenUsage.record(outputTokens, {
+      "gen_ai.system": system,
+      "gen_ai.request.model": model,
+      [ATTR_GEN_AI_TOKEN_TYPE]: "output",
+    });
+  }
+}
 
 /** Direct Anthropic Console IDs. */
 const DIRECT_MODELS = {
@@ -210,11 +243,22 @@ export async function resolveAnthropicTransport(
 
   if (!opts?.forceRefresh && _inflight) return _inflight;
 
-  _inflight = (async () => {
+  _inflight = withSpan("llm.transport.probe", {}, async (span) => {
     const probe = await probeDirectAnthropic();
     _decision = decideFromProbe(probe);
+    span.setAttribute("llm.transport.decision", _decision.transport);
+    span.setAttribute("llm.transport.reason", _decision.reason);
+    otelLog.info("transport probe result", {
+      scope: "llm",
+      transport: _decision.transport,
+      directOk: _decision.directOk,
+      directError: _decision.directError,
+    });
+    if (_decision.transport === "openrouter") {
+      llmFallbackCount.add(1, { reason: "probe" });
+    }
     return _decision;
-  })();
+  });
 
   try {
     return await _inflight;
@@ -299,34 +343,70 @@ type MessageCreateNonStream = Exclude<
  * messages.create with automatic OpenRouter fallback on Anthropic usage cap.
  */
 export async function claudeMessages(params: MessageCreateNonStream) {
-  let { client, transport } = await getClaudeClient();
-  try {
-    return await client.messages.create({ ...params, stream: false });
-  } catch (e) {
-    const limit = classifyApiLimitError(e);
-    if (
-      transport === "direct" &&
-      limit?.kind === "usage_cap" &&
-      process.env.OPENROUTER_API_KEY
-    ) {
-      forceOpenRouterFallback(
-        `Live usage-cap mid-call — switched to OpenRouter`,
-        limit.regainAt,
-      );
-      const fallback = await getClaudeClient();
-      // Remap native Anthropic model IDs to OpenRouter equivalents if needed.
-      const model = remapModelForTransport(
-        String(params.model),
-        "openrouter",
-      );
-      return await fallback.client.messages.create({
-        ...params,
-        model,
-        stream: false,
-      });
-    }
-    throw e;
-  }
+  const { client, transport } = await getClaudeClient();
+  const start = Date.now();
+  return withSpan(
+    "llm.claude.messages",
+    {
+      [ATTR_GEN_AI_SYSTEM]: "anthropic",
+      [ATTR_GEN_AI_REQUEST_MODEL]: String(params.model),
+      "llm.transport": transport,
+    },
+    async (span) => {
+      try {
+        const res = await client.messages.create({ ...params, stream: false });
+        span.setAttribute(ATTR_GEN_AI_RESPONSE_MODEL, res.model);
+        recordLlmMetrics(
+          Date.now() - start,
+          "anthropic",
+          res.model,
+          res.usage?.input_tokens,
+          res.usage?.output_tokens,
+        );
+        return res;
+      } catch (e) {
+        const limit = classifyApiLimitError(e);
+        if (
+          transport === "direct" &&
+          limit?.kind === "usage_cap" &&
+          process.env.OPENROUTER_API_KEY
+        ) {
+          otelLog.warn("live usage-cap mid-call, retried via OpenRouter", {
+            scope: "llm",
+            model: String(params.model),
+            regainAt: limit.regainAt,
+          });
+          llmFallbackCount.add(1, { reason: "mid_call" });
+          forceOpenRouterFallback(
+            `Live usage-cap mid-call — switched to OpenRouter`,
+            limit.regainAt,
+          );
+          const fallback = await getClaudeClient();
+          // Remap native Anthropic model IDs to OpenRouter equivalents if needed.
+          const model = remapModelForTransport(
+            String(params.model),
+            "openrouter",
+          );
+          span.setAttribute("llm.transport", "openrouter");
+          span.setAttribute(ATTR_GEN_AI_REQUEST_MODEL, model);
+          const res = await fallback.client.messages.create({
+            ...params,
+            model,
+            stream: false,
+          });
+          recordLlmMetrics(
+            Date.now() - start,
+            "anthropic",
+            model,
+            res.usage?.input_tokens,
+            res.usage?.output_tokens,
+          );
+          return res;
+        }
+        throw e;
+      }
+    },
+  );
 }
 
 function remapModelForTransport(
@@ -368,16 +448,28 @@ export async function embedTexts(texts: string[]): Promise<EmbedResult> {
   if (!texts.length) return { vectors: [], inputTokens: 0 };
   const client = openrouter();
   const models = await getModels();
-  const res = await client.embeddings.create({
-    model: models.embed,
-    input: texts,
-  });
-  const vectors = res.data
-    .sort((a, b) => a.index - b.index)
-    .map((d) => d.embedding);
-  const inputTokens =
-    res.usage?.prompt_tokens ??
-    res.usage?.total_tokens ??
-    texts.reduce((n, t) => n + Math.ceil(t.length / 4), 0);
-  return { vectors, inputTokens };
+  const start = Date.now();
+  return withSpan(
+    "llm.embed",
+    {
+      [ATTR_GEN_AI_SYSTEM]: "openai",
+      "llm.provider": "openrouter",
+      [ATTR_GEN_AI_REQUEST_MODEL]: models.embed,
+    },
+    async () => {
+      const res = await client.embeddings.create({
+        model: models.embed,
+        input: texts,
+      });
+      const vectors = res.data
+        .sort((a, b) => a.index - b.index)
+        .map((d) => d.embedding);
+      const inputTokens =
+        res.usage?.prompt_tokens ??
+        res.usage?.total_tokens ??
+        texts.reduce((n, t) => n + Math.ceil(t.length / 4), 0);
+      recordLlmMetrics(Date.now() - start, "openai", models.embed, inputTokens);
+      return { vectors, inputTokens };
+    },
+  );
 }

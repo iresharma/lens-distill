@@ -7,6 +7,18 @@ const nextConfig: NextConfig = {
     "ws",
     "pdfjs-dist",
     "js-tiktoken",
+    "@opentelemetry/sdk-node",
+    "@opentelemetry/sdk-logs",
+    "@opentelemetry/sdk-metrics",
+    "@opentelemetry/sdk-trace-base",
+    "@opentelemetry/resources",
+    "@opentelemetry/semantic-conventions",
+    "@opentelemetry/exporter-trace-otlp-proto",
+    "@opentelemetry/exporter-metrics-otlp-proto",
+    "@opentelemetry/exporter-logs-otlp-proto",
+    "@opentelemetry/instrumentation-http",
+    "@opentelemetry/instrumentation-undici",
+    "@opentelemetry/context-async-hooks",
   ],
   // Allow ~21 MB portfolio PDFs (Nature of Code) through App Router form posts.
   experimental: {

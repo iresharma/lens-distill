@@ -1,4 +1,5 @@
 import type { ParagraphUnit, ParseCalibration, ParseResult } from "./types";
+import { otelLog } from "@/lib/otel/logger";
 
 type TextItem = {
   str: string;
@@ -324,9 +325,14 @@ function calibratePageOffset(
   }));
 
   if (usable.length < 5) {
-    console.log(
-      "[pdf] page-offset: fewer than 5 usable samples after front-matter skip",
-      { numPages, rawSamples: pageNumSamples.length, usable: usable.length },
+    otelLog.info(
+      "page-offset: fewer than 5 usable samples after front-matter skip",
+      {
+        scope: "pdf",
+        numPages,
+        rawSamples: pageNumSamples.length,
+        usable: usable.length,
+      },
     );
     return { pageOffset: null, agreement: null, samples };
   }
@@ -345,7 +351,8 @@ function calibratePageOffset(
     }
   }
   const agreement = bestC / usable.length;
-  console.log("[pdf] page-offset calibration", {
+  otelLog.info("page-offset calibration", {
+    scope: "pdf",
     samples: samples.slice(0, 20),
     offsetHistogram: [...offsetCounts.entries()].sort((a, b) => b[1] - a[1]),
     agreement,
@@ -356,8 +363,9 @@ function calibratePageOffset(
     return { pageOffset: bestO, agreement, samples };
   }
   if (agreement >= 0.5) {
-    console.log(
-      "[pdf] page-offset agreement 50–80% — shipping page=null (fail closed)",
+    otelLog.info(
+      "page-offset agreement 50–80% — shipping page=null (fail closed)",
+      { scope: "pdf", agreement },
     );
   }
   return { pageOffset: null, agreement, samples };
@@ -397,6 +405,10 @@ export async function parsePdf(file: File): Promise<ParseResult> {
       .join("").length;
   }
   if (totalChars / sampleIdx.length < 100) {
+    otelLog.error("PDF looks like a scan, rejecting", {
+      scope: "pdf",
+      avgCharsPerSample: totalChars / sampleIdx.length,
+    });
     throw new Error(
       "This PDF looks like a scan (too little extractable text). OCR is required — aborting.",
     );
@@ -623,16 +635,21 @@ export async function parsePdf(file: File): Promise<ParseResult> {
       paragraphCount: v.count,
     }));
 
-  console.log("[pdf] calibration", {
+  otelLog.info("calibration", {
+    scope: "pdf",
     bodySize,
     lineSpacing,
     pageOffset,
     chapterCount,
-    chapters,
-    headingSizeHistogram,
+    chapters: JSON.stringify(chapters),
+    headingSizeHistogram: JSON.stringify(headingSizeHistogram),
   });
 
   if (chapterCount > 40 || chapterCount < 5) {
+    otelLog.error("chapter detection gate failed", {
+      scope: "pdf",
+      chapterCount,
+    });
     throw new Error(
       `Chapter detection failed: ${chapterCount} chapters. ` +
         `Expected 5-40. Tune heading thresholds before ingesting. ` +

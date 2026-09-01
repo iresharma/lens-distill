@@ -11,6 +11,7 @@ import {
 import { recordStageUsage } from "@/lib/llm/record-usage";
 import { markStageDone, markStageRunning, patchStageMetrics } from "../stage-runs";
 import type { JobPayload, StageHandler } from "../types";
+import { context } from "@/lib/otel/tracer";
 
 const STEP = 40;
 const CONCURRENCY = 4;
@@ -68,6 +69,7 @@ export const extractStage: StageHandler = async (job, wdb, deadline) => {
   let kept = 0;
 
   const queue = [...batch];
+  const parentCtx = context.active();
   const workerStats = await Promise.all(
     Array.from({ length: CONCURRENCY }, async () => {
       let usageIn = 0;
@@ -92,23 +94,25 @@ export const extractStage: StageHandler = async (job, wdb, deadline) => {
           .map((p) => `[p${p.paraIndex}] ${p.text}`)
           .join("\n\n");
 
-        const res = await claudeMessages({
-          model: models.extract,
-          max_tokens: 4096,
-          system,
-          tools: [emitClaims],
-          tool_choice: { type: "tool", name: "emit_claims" },
-          messages: [
-            {
-              role: "user",
-              content: buildExtractUserContent(
-                book.extractPrompt,
-                `${chunk.chapterIndex ?? "?"} / ${chunk.sectionTitle ?? ""}`,
-                marked,
-              ),
-            },
-          ],
-        });
+        const res = await context.with(parentCtx, () =>
+          claudeMessages({
+            model: models.extract,
+            max_tokens: 4096,
+            system,
+            tools: [emitClaims],
+            tool_choice: { type: "tool", name: "emit_claims" },
+            messages: [
+              {
+                role: "user",
+                content: buildExtractUserContent(
+                  book.extractPrompt,
+                  `${chunk.chapterIndex ?? "?"} / ${chunk.sectionTitle ?? ""}`,
+                  marked,
+                ),
+              },
+            ],
+          }),
+        );
 
         usageIn += res.usage?.input_tokens ?? 0;
         usageOut += res.usage?.output_tokens ?? 0;

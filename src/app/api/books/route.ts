@@ -23,6 +23,8 @@ import {
   getSlotsRemaining,
   QuotaExceededError,
 } from "@/lib/quota";
+import { withSpan } from "@/lib/otel/tracer";
+import { otelLog } from "@/lib/otel/logger";
 
 export const maxDuration = 800;
 
@@ -138,7 +140,18 @@ export async function POST(req: Request) {
 
   let parsed;
   try {
-    parsed = await parsePdf(file);
+    parsed = await withSpan(
+      "pdf.parse",
+      { "pdf.filename": file.name, "pdf.byte_size": file.size },
+      async (span) => {
+        const result = await parsePdf(file);
+        span.setAttributes({
+          "pdf.chapter_count": result.calibration?.chapters.length ?? -1,
+          "pdf.page_offset_agreement": result.calibration?.pageOffsetAgreement ?? -1,
+        });
+        return result;
+      },
+    );
   } catch (e) {
     return Response.json(
       { error: e instanceof Error ? e.message : "PDF parse failed" },
@@ -202,6 +215,8 @@ export async function POST(req: Request) {
   } finally {
     await pool.end().catch(() => {});
   }
+
+  otelLog.info("book queued", { scope: "pipeline", bookId, title });
 
   after(() => {
     void drainPipeline({ budgetMs: 720_000 });

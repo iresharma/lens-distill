@@ -4,8 +4,14 @@ import type { WorkerDb } from "@/db";
 import {
   addUsage,
   emptyUsage,
+  estimateUsd,
   type UsageRollup,
 } from "@/lib/llm/pricing";
+import {
+  pipelineTokensInput,
+  pipelineTokensOutput,
+  pipelineCostEstimatedUsd,
+} from "@/lib/otel/meter";
 
 export async function recordStageUsage(
   wdb: WorkerDb,
@@ -31,4 +37,10 @@ export async function recordStageUsage(
     .update(stageRuns)
     .set({ metrics: { ...metrics, usage: next } })
     .where(eq(stageRuns.id, row.id));
+
+  const attrs = { bookId, stage, model };
+  if (inputTokens) pipelineTokensInput.add(inputTokens, attrs);
+  if (outputTokens) pipelineTokensOutput.add(outputTokens, attrs);
+  const costUsd = estimateUsd(model, inputTokens, outputTokens);
+  if (costUsd) pipelineCostEstimatedUsd.add(costUsd, attrs);
 }

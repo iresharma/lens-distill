@@ -9,6 +9,7 @@ import { recordStageUsage } from "@/lib/llm/record-usage";
 import { stageRuns } from "@/db/schema";
 import { markStageDone, markStageRunning, patchStageMetrics } from "../stage-runs";
 import type { JobPayload, StageHandler } from "../types";
+import { context } from "@/lib/otel/tracer";
 
 async function readMetrics(
   wdb: Parameters<StageHandler>[1],
@@ -437,27 +438,30 @@ export const dedupeStage: StageHandler = async (job, wdb, deadline) => {
     const system = loadPrompt("merge");
     const batch = needsLlm.slice(0, LLM_MERGE_BATCH);
     const queue = [...batch];
+    const parentCtx = context.active();
 
     const workers = Array.from({ length: LLM_CONCURRENCY }, async () => {
       while (queue.length && Date.now() < deadline - 20_000) {
         const cluster = queue.shift();
         if (!cluster) return;
 
-        const res = await claudeMessages({
-          model: models.merge,
-          max_tokens: 1024,
-          system,
-          tools: [emitMerge],
-          tool_choice: { type: "tool", name: "emit_merge" },
-          messages: [
-            {
-              role: "user",
-              content: cluster
-                .map((c) => `- (${c.claimType}/${c.favors}) ${c.statement}`)
-                .join("\n"),
-            },
-          ],
-        });
+        const res = await context.with(parentCtx, () =>
+          claudeMessages({
+            model: models.merge,
+            max_tokens: 1024,
+            system,
+            tools: [emitMerge],
+            tool_choice: { type: "tool", name: "emit_merge" },
+            messages: [
+              {
+                role: "user",
+                content: cluster
+                  .map((c) => `- (${c.claimType}/${c.favors}) ${c.statement}`)
+                  .join("\n"),
+              },
+            ],
+          }),
+        );
 
         const { models: active } = await getClaudeClient();
         await recordStageUsage(

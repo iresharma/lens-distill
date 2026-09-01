@@ -1,6 +1,7 @@
 import { after, NextResponse } from "next/server";
 import { drainPipeline, isPipelineDraining } from "@/lib/pipeline/drain";
 import { resetFailedJobs } from "@/lib/pipeline/resume";
+import { otelLog } from "@/lib/otel/logger";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -28,12 +29,14 @@ export async function POST(req: Request) {
   }
 
   if (isPipelineDraining()) {
+    otelLog.warn("resume rejected — already draining", { scope: "pipeline", bookIds });
     return NextResponse.json(
       { ok: false, error: "Pipeline already draining" },
       { status: 409 },
     );
   }
 
+  otelLog.info("pipeline resume requested", { scope: "pipeline", bookIds });
   const result = await resetFailedJobs({ bookIds });
 
   after(() => {

@@ -4,7 +4,8 @@ import {
   conceptVocab,
   type NewJob,
 } from "@/db/schema";
-import { embedTexts } from "@/lib/llm/client";
+import { embedTexts, getClaudeClient } from "@/lib/llm/client";
+import { recordStageUsage } from "@/lib/llm/record-usage";
 import { markStageDone, markStageRunning } from "../stage-runs";
 import type { StageHandler } from "../types";
 
@@ -172,10 +173,20 @@ export const canonicalizeStage: StageHandler = async (job, wdb) => {
     const embeddings: number[][] = [];
     for (let i = 0; i < embedCandidates.length; i += EMBED_BATCH) {
       const batch = embedCandidates.slice(i, i + EMBED_BATCH);
-      const { vectors: vecs } = await embedTexts(
+      const { vectors: vecs, inputTokens } = await embedTexts(
         batch.map((t) => t.replace(/_/g, " ")),
       );
       embeddings.push(...vecs);
+      const { models } = await getClaudeClient();
+      await recordStageUsage(
+        wdb,
+        bookId,
+        "canonicalize",
+        models.embed,
+        inputTokens,
+        0,
+        1,
+      );
     }
 
     const used = new Set<number>();
