@@ -154,6 +154,14 @@ export const POST = withRouteMetrics("/api/books", "POST", async (req: Request) 
       },
     );
   } catch (e) {
+    otelLog.error("pdf parse threw", {
+      scope: "pdf",
+      filename: file.name,
+      byteSize: file.size,
+      message: e instanceof Error ? e.message : String(e),
+      stack: e instanceof Error ? e.stack : undefined,
+      name: e instanceof Error ? e.name : undefined,
+    });
     return Response.json(
       { error: e instanceof Error ? e.message : "PDF parse failed" },
       { status: 400 },

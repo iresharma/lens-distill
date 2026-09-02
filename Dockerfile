@@ -1,7 +1,8 @@
 # syntax=docker/dockerfile:1
 
-# pdfjs-dist requires Node >=22.13.0
-ARG NODE_VERSION=22-alpine
+# Match local dev (Node 26) to rule out V8/engine skew in pdfjs-dist parsing.
+# pdfjs-dist requires Node >=22.13.0.
+ARG NODE_VERSION=26-alpine
 
 FROM node:${NODE_VERSION} AS base
 RUN apk add --no-cache libc6-compat
