@@ -129,7 +129,13 @@ function clientFor(transport: AnthropicTransport): Anthropic {
   if (!_directClient) {
     const key = process.env.ANTHROPIC_API_KEY;
     if (!key) throw new Error("ANTHROPIC_API_KEY is not set");
-    _directClient = new Anthropic({ apiKey: key });
+    const workspaceId = process.env.ANTHROPIC_WORKSPACE_ID;
+    _directClient = new Anthropic({
+      apiKey: key,
+      ...(workspaceId
+        ? { defaultHeaders: { "anthropic-workspace-id": workspaceId } }
+        : {}),
+    });
   }
   return _directClient;
 }
@@ -146,6 +152,7 @@ export async function probeDirectAnthropic(): Promise<{
     return { ok: false, error: "ANTHROPIC_API_KEY not set" };
   }
 
+  const workspaceId = process.env.ANTHROPIC_WORKSPACE_ID;
   try {
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -153,6 +160,7 @@ export async function probeDirectAnthropic(): Promise<{
         "x-api-key": key,
         "anthropic-version": "2023-06-01",
         "content-type": "application/json",
+        ...(workspaceId ? { "anthropic-workspace-id": workspaceId } : {}),
       },
       body: JSON.stringify({
         model: DIRECT_MODELS.extract,
