@@ -22,6 +22,13 @@ const nextConfig: NextConfig = {
     "@opentelemetry/instrumentation-undici",
     "@opentelemetry/context-async-hooks",
   ],
+  // pdfjs-dist's legacy Node build loads @napi-rs/canvas via a dynamically
+  // constructed require(), which the standalone output's file tracer can't
+  // statically follow — force it (and its platform-specific native binding
+  // package, e.g. @napi-rs/canvas-linux-x64-musl) into the trace.
+  outputFileTracingIncludes: {
+    "/*": ["node_modules/@napi-rs/canvas*/**/*"],
+  },
   // Allow ~21 MB portfolio PDFs (Nature of Code) through App Router form posts.
   experimental: {
     proxyClientMaxBodySize: "25mb",
