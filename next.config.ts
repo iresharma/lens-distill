@@ -6,6 +6,7 @@ const nextConfig: NextConfig = {
   serverExternalPackages: [
     "pg",
     "pdfjs-dist",
+    "@napi-rs/canvas",
     "js-tiktoken",
     "@opentelemetry/sdk-node",
     "@opentelemetry/sdk-logs",
