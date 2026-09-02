@@ -1,33 +1,31 @@
-import { neon, neonConfig, Pool } from "@neondatabase/serverless";
-import { drizzle as drizzleHttp } from "drizzle-orm/neon-http";
-import { drizzle as drizzlePool } from "drizzle-orm/neon-serverless";
-import ws from "ws";
+import { Pool } from "pg";
+import { drizzle } from "drizzle-orm/node-postgres";
 import * as schema from "./schema";
 
-neonConfig.webSocketConstructor = ws;
+type Db = ReturnType<typeof drizzle<typeof schema>>;
 
-type HttpDb = ReturnType<typeof drizzleHttp>;
-
-function createDb(): HttpDb {
+function createPool(): Pool {
   const url = process.env.DATABASE_URL;
   if (!url) {
     throw new Error("DATABASE_URL is not set");
   }
-  return drizzleHttp(neon(url), { schema });
+  return new Pool({ connectionString: url });
 }
 
 const globalForDb = globalThis as unknown as {
-  db?: HttpDb;
+  db?: Db;
+  pool?: Pool;
 };
 
-function getDb(): HttpDb {
+function getDb(): Db {
   if (!globalForDb.db) {
-    globalForDb.db = createDb();
+    globalForDb.pool = createPool();
+    globalForDb.db = drizzle(globalForDb.pool, { schema });
   }
   return globalForDb.db;
 }
 
-export const db: HttpDb = new Proxy({} as HttpDb, {
+export const db: Db = new Proxy({} as Db, {
   get(_target, prop, receiver) {
     const real = getDb();
     const value = Reflect.get(real, prop, receiver);
@@ -41,7 +39,7 @@ export function makeWorkerDb() {
     throw new Error("DATABASE_URL is not set");
   }
   const pool = new Pool({ connectionString: url });
-  return { pool, wdb: drizzlePool(pool, { schema }) };
+  return { pool, wdb: drizzle(pool, { schema }) };
 }
 
 export type WorkerDb = ReturnType<typeof makeWorkerDb>["wdb"];
