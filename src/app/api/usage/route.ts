@@ -1,9 +1,10 @@
 import { fetchUsageSnapshot } from "@/lib/usage/providers";
 import { NextResponse } from "next/server";
+import { withRouteMetrics } from "@/lib/otel/http-metrics";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export const GET = withRouteMetrics("/api/usage", "GET", async () => {
   try {
     const snapshot = await fetchUsageSnapshot();
     return NextResponse.json(snapshot);
@@ -15,4 +16,4 @@ export async function GET() {
       { status: 500 },
     );
   }
-}
+});

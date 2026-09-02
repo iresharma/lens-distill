@@ -1,4 +1,5 @@
 import { metrics, type Attributes } from "@opentelemetry/api";
+import { monitorEventLoopDelay } from "node:perf_hooks";
 
 /**
  * Unlike trace/logs, the metrics API has no proxy-provider fallback: a
@@ -93,6 +94,12 @@ export const genAiTokenUsage = histogram(
   "{token}",
 );
 
+export const llmCallCostUsd = histogram(
+  "llm.call.cost.estimated_usd",
+  "Estimated USD cost of a single outbound LLM/embedding call (list-price estimate)",
+  "1",
+);
+
 export const pipelineTokensInput = counter(
   "pipeline.tokens.input",
   "Cumulative input tokens billed across the pipeline",
@@ -117,6 +124,42 @@ export const quotaExceededCount = counter(
   "{event}",
 );
 
+export const llmCallErrors = counter(
+  "llm.call.errors",
+  "Outbound LLM/embedding calls that raised without a successful fallback",
+  "{error}",
+);
+
+export const pipelineBookDuration = histogram(
+  "pipeline.book.duration",
+  "Wall-clock time from a book being queued to reaching ready",
+  "ms",
+);
+
+export const pipelineBooksCompleted = counter(
+  "pipeline.books.completed",
+  "Books that reached a terminal status (ready or failed)",
+  "{book}",
+);
+
+export const httpServerRequests = counter(
+  "http.server.requests",
+  "HTTP requests handled by an API route, by route/method/status",
+  "{request}",
+);
+
+export const httpServerDuration = histogram(
+  "http.server.duration",
+  "Duration of an API route request, start to response",
+  "ms",
+);
+
+export const httpServerActiveRequests = upDownCounter(
+  "http.server.active_requests",
+  "In-flight API route requests",
+  "{request}",
+);
+
 let quotaGaugeRegistered = false;
 
 /**
@@ -138,4 +181,43 @@ export function registerQuotaGauge() {
       const slots = await getSlotsRemaining().catch(() => null);
       if (slots) result.observe(slots.remaining);
     });
+}
+
+let processMetricsRegistered = false;
+
+/**
+ * Registers process/runtime observable gauges (event-loop lag, uptime)
+ * against the real MeterProvider. Same ordering constraint as
+ * registerQuotaGauge — must run AFTER startOtel()'s sdk.start().
+ *
+ * Deliberately excludes CPU/memory — those are pulled from the k8s API
+ * (cAdvisor/kubelet summary) instead, so we don't double-report them here.
+ */
+export function registerProcessMetrics() {
+  if (processMetricsRegistered) return;
+  processMetricsRegistered = true;
+
+  const eventLoopDelay = monitorEventLoopDelay({ resolution: 20 });
+  eventLoopDelay.enable();
+
+  meter()
+    .createObservableGauge("process.uptime", {
+      description: "Seconds since the process started",
+      unit: "s",
+    })
+    .addCallback((result) => result.observe(process.uptime()));
+
+  meter()
+    .createObservableGauge("nodejs.eventloop.delay.mean", {
+      description: "Mean event-loop delay since process start",
+      unit: "ms",
+    })
+    .addCallback((result) => result.observe(eventLoopDelay.mean / 1e6));
+
+  meter()
+    .createObservableGauge("nodejs.eventloop.delay.p99", {
+      description: "P99 event-loop delay since process start",
+      unit: "ms",
+    })
+    .addCallback((result) => result.observe(eventLoopDelay.percentile(99) / 1e6));
 }

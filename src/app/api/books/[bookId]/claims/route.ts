@@ -1,11 +1,15 @@
 import { and, arrayContains, eq, isNull, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { claims, paragraphs } from "@/db/schema";
+import { withRouteMetrics } from "@/lib/otel/http-metrics";
 
-export async function GET(
+export const GET = withRouteMetrics(
+  "/api/books/[bookId]/claims",
+  "GET",
+  async (
   req: Request,
   ctx: { params: Promise<{ bookId: string }> },
-) {
+) => {
   const { bookId } = await ctx.params;
   const url = new URL(req.url);
   const concept = url.searchParams.get("concept");
@@ -95,4 +99,5 @@ export async function GET(
       clusterId: c.clusterId,
     })),
   });
-}
+  },
+);

@@ -25,13 +25,14 @@ import {
 } from "@/lib/quota";
 import { withSpan } from "@/lib/otel/tracer";
 import { otelLog } from "@/lib/otel/logger";
+import { withRouteMetrics } from "@/lib/otel/http-metrics";
 
 export const maxDuration = 800;
 
 /** 25 MB so portfolio demos like Nature of Code (~21 MB) can upload. */
 const MAX_PDF_BYTES = 25 * 1024 * 1024;
 
-export async function GET() {
+export const GET = withRouteMetrics("/api/books", "GET", async () => {
   const slots = await getSlotsRemaining();
 
   const bookRows = await db
@@ -91,9 +92,9 @@ export async function GET() {
     slots,
     defaultPersona: DEFAULT_PERSONA,
   });
-}
+});
 
-export async function POST(req: Request) {
+export const POST = withRouteMetrics("/api/books", "POST", async (req: Request) => {
   const slots = await getSlotsRemaining();
   if (slots.remaining <= 0) {
     return Response.json(
@@ -229,4 +230,4 @@ export async function POST(req: Request) {
     stages: PIPELINE_STAGES,
     slots: await getSlotsRemaining(),
   });
-}
+});

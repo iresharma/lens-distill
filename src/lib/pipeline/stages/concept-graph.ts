@@ -13,6 +13,7 @@ import { loadPrompt } from "@/lib/llm/prompts/load";
 import { recordStageUsage } from "@/lib/llm/record-usage";
 import { markStageDone, markStageRunning } from "../stage-runs";
 import type { StageHandler } from "../types";
+import { pipelineBookDuration, pipelineBooksCompleted } from "@/lib/otel/meter";
 
 type EdgeRow = {
   concept_id: string;
@@ -280,10 +281,18 @@ export const conceptGraphStage: StageHandler = async (job, wdb) => {
     conceptCount: nodes.length,
   });
 
+  const readyAt = new Date();
   await wdb
     .update(books)
-    .set({ status: "ready", readyAt: new Date(), statusError: null })
+    .set({ status: "ready", readyAt, statusError: null })
     .where(eq(books.bookId, bookId));
+
+  const [{ createdAt }] = await wdb
+    .select({ createdAt: books.createdAt })
+    .from(books)
+    .where(eq(books.bookId, bookId));
+  pipelineBookDuration.record(readyAt.getTime() - createdAt.getTime());
+  pipelineBooksCompleted.add(1, { status: "ready" });
 
   // Terminal stage — no successor
   return null;

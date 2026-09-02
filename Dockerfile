@@ -38,6 +38,7 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
 USER nextjs
 
-EXPOSE 3000
+# App traffic on 3000; Prometheus scrapes metrics off 9464/metrics.
+EXPOSE 3000 9464
 
 CMD ["node", "server.js"]

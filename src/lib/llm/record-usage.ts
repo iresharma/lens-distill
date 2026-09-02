@@ -38,7 +38,10 @@ export async function recordStageUsage(
     .set({ metrics: { ...metrics, usage: next } })
     .where(eq(stageRuns.id, row.id));
 
-  const attrs = { bookId, stage, model };
+  // No bookId here: it's an unbounded label that would grow the Prometheus
+  // time-series set forever. Per-book usage is already on the stageRuns row
+  // above; these metrics are for aggregate cost/token dashboards.
+  const attrs = { stage, model };
   if (inputTokens) pipelineTokensInput.add(inputTokens, attrs);
   if (outputTokens) pipelineTokensOutput.add(outputTokens, attrs);
   const costUsd = estimateUsd(model, inputTokens, outputTokens);

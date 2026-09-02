@@ -12,7 +12,7 @@ import { markStageFailed } from "@/lib/pipeline/stage-runs";
 import { STAGES } from "@/lib/pipeline/stages";
 import { otelLog } from "@/lib/otel/logger";
 import { withSpan } from "@/lib/otel/tracer";
-import { jobsClaimed } from "@/lib/otel/meter";
+import { jobsClaimed, pipelineBooksCompleted } from "@/lib/otel/meter";
 
 let draining = false;
 
@@ -85,6 +85,7 @@ export async function drainPipeline(opts?: {
                 .update(books)
                 .set({ status: "failed", statusError: msg })
                 .where(eq(books.bookId, job.bookId));
+              pipelineBooksCompleted.add(1, { status: "failed" });
             }
             processed.push({
               id: job.id,

@@ -17,11 +17,15 @@ import {
   mergeUsage,
   type UsageRollup,
 } from "@/lib/llm/pricing";
+import { withRouteMetrics } from "@/lib/otel/http-metrics";
 
-export async function GET(
-  _req: Request,
-  ctx: { params: Promise<{ bookId: string }> },
-) {
+export const GET = withRouteMetrics(
+  "/api/books/[bookId]",
+  "GET",
+  async (
+    _req: Request,
+    ctx: { params: Promise<{ bookId: string }> },
+  ) => {
   const { bookId } = await ctx.params;
   const [book] = await db
     .select()
@@ -159,4 +163,5 @@ export async function GET(
     },
     usage,
   });
-}
+  },
+);

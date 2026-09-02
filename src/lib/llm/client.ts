@@ -1,9 +1,16 @@
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 import { classifyApiLimitError } from "@/lib/llm/api-errors";
+import { estimateUsd } from "@/lib/llm/pricing";
 import { withSpan } from "@/lib/otel/tracer";
 import { otelLog } from "@/lib/otel/logger";
-import { llmFallbackCount, llmCallDuration, genAiTokenUsage } from "@/lib/otel/meter";
+import {
+  llmFallbackCount,
+  llmCallDuration,
+  llmCallErrors,
+  llmCallCostUsd,
+  genAiTokenUsage,
+} from "@/lib/otel/meter";
 import {
   ATTR_GEN_AI_SYSTEM,
   ATTR_GEN_AI_REQUEST_MODEL,
@@ -31,6 +38,13 @@ function recordLlmMetrics(
       "gen_ai.system": system,
       "gen_ai.request.model": model,
       [ATTR_GEN_AI_TOKEN_TYPE]: "output",
+    });
+  }
+  if (inputTokens != null || outputTokens != null) {
+    const costUsd = estimateUsd(model, inputTokens ?? 0, outputTokens ?? 0);
+    llmCallCostUsd.record(costUsd, {
+      "gen_ai.system": system,
+      "gen_ai.request.model": model,
     });
   }
 }
@@ -403,6 +417,11 @@ export async function claudeMessages(params: MessageCreateNonStream) {
           );
           return res;
         }
+        llmCallErrors.add(1, {
+          "gen_ai.system": "anthropic",
+          "gen_ai.request.model": String(params.model),
+          "error.kind": limit?.kind ?? "unknown",
+        });
         throw e;
       }
     },
@@ -457,19 +476,28 @@ export async function embedTexts(texts: string[]): Promise<EmbedResult> {
       [ATTR_GEN_AI_REQUEST_MODEL]: models.embed,
     },
     async () => {
-      const res = await client.embeddings.create({
-        model: models.embed,
-        input: texts,
-      });
-      const vectors = res.data
-        .sort((a, b) => a.index - b.index)
-        .map((d) => d.embedding);
-      const inputTokens =
-        res.usage?.prompt_tokens ??
-        res.usage?.total_tokens ??
-        texts.reduce((n, t) => n + Math.ceil(t.length / 4), 0);
-      recordLlmMetrics(Date.now() - start, "openai", models.embed, inputTokens);
-      return { vectors, inputTokens };
+      try {
+        const res = await client.embeddings.create({
+          model: models.embed,
+          input: texts,
+        });
+        const vectors = res.data
+          .sort((a, b) => a.index - b.index)
+          .map((d) => d.embedding);
+        const inputTokens =
+          res.usage?.prompt_tokens ??
+          res.usage?.total_tokens ??
+          texts.reduce((n, t) => n + Math.ceil(t.length / 4), 0);
+        recordLlmMetrics(Date.now() - start, "openai", models.embed, inputTokens);
+        return { vectors, inputTokens };
+      } catch (e) {
+        llmCallErrors.add(1, {
+          "gen_ai.system": "openai",
+          "gen_ai.request.model": models.embed,
+          "error.kind": "unknown",
+        });
+        throw e;
+      }
     },
   );
 }

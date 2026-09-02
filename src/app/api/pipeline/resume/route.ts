@@ -2,6 +2,7 @@ import { after, NextResponse } from "next/server";
 import { drainPipeline, isPipelineDraining } from "@/lib/pipeline/drain";
 import { resetFailedJobs } from "@/lib/pipeline/resume";
 import { otelLog } from "@/lib/otel/logger";
+import { withRouteMetrics } from "@/lib/otel/http-metrics";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -12,7 +13,10 @@ export const maxDuration = 300;
  *
  * Resets failed/stuck jobs and starts a background drain.
  */
-export async function POST(req: Request) {
+export const POST = withRouteMetrics(
+  "/api/pipeline/resume",
+  "POST",
+  async (req: Request) => {
   let bookIds: string[] | undefined;
   try {
     const body = (await req.json().catch(() => ({}))) as {
@@ -48,10 +52,11 @@ export async function POST(req: Request) {
     ...result,
     draining: true,
   });
-}
+  },
+);
 
-export async function GET() {
+export const GET = withRouteMetrics("/api/pipeline/resume", "GET", async () => {
   return NextResponse.json({
     draining: isPipelineDraining(),
   });
-}
+});

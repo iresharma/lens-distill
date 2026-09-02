@@ -16,6 +16,7 @@ const nextConfig: NextConfig = {
     "@opentelemetry/semantic-conventions",
     "@opentelemetry/exporter-trace-otlp-proto",
     "@opentelemetry/exporter-metrics-otlp-proto",
+    "@opentelemetry/exporter-prometheus",
     "@opentelemetry/exporter-logs-otlp-proto",
     "@opentelemetry/instrumentation-http",
     "@opentelemetry/instrumentation-undici",

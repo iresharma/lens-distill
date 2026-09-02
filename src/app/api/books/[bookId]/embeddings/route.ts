@@ -2,11 +2,15 @@ import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { claims } from "@/db/schema";
 import { withSpan } from "@/lib/otel/tracer";
+import { withRouteMetrics } from "@/lib/otel/http-metrics";
 
-export async function GET(
+export const GET = withRouteMetrics(
+  "/api/books/[bookId]/embeddings",
+  "GET",
+  async (
   req: Request,
   ctx: { params: Promise<{ bookId: string }> },
-) {
+) => {
   const { bookId } = await ctx.params;
   const url = new URL(req.url);
   const focus = url.searchParams.get("focus");
@@ -83,4 +87,5 @@ export async function GET(
       });
     },
   );
-}
+  },
+);
