@@ -3,6 +3,7 @@ import { getEncoding } from "js-tiktoken";
 import { books, chunks, paragraphs, type NewJob } from "@/db/schema";
 import { markStageDone, markStageRunning } from "../stage-runs";
 import type { JobPayload, StageHandler } from "../types";
+import { otelLog } from "@/lib/otel/logger";
 
 const TARGET = 1200;
 const MIN_TOKENS = 600;
@@ -14,6 +15,7 @@ const MAX_CHUNKS = 550;
 export const chunkStage: StageHandler = async (job, wdb) => {
   const bookId = job.bookId;
   await markStageRunning(wdb, bookId, "chunk");
+  otelLog.info("chunk stage running", { scope: "pipeline", bookId, stage: "chunk" });
   await wdb
     .update(books)
     .set({ status: "running" })
@@ -159,7 +161,7 @@ export const chunkStage: StageHandler = async (job, wdb) => {
 
   await wdb.insert(chunks).values(out);
 
-  await markStageDone(wdb, bookId, "chunk", {
+  const chunkDoneMetrics = {
     chapterCount: chapters.size,
     paragraphCount: paras.length,
     chunkCount: out.length,
@@ -168,6 +170,13 @@ export const chunkStage: StageHandler = async (job, wdb) => {
     maxTokens: Math.max(...tokenCounts),
     targetTokens: TARGET,
     gate: "ok",
+  };
+  await markStageDone(wdb, bookId, "chunk", chunkDoneMetrics);
+  otelLog.info("chunk stage done", {
+    scope: "pipeline",
+    bookId,
+    stage: "chunk",
+    ...chunkDoneMetrics,
   });
 
   const incoming = (job.payload || {}) as JobPayload;

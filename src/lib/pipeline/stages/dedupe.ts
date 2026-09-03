@@ -10,6 +10,7 @@ import { stageRuns } from "@/db/schema";
 import { markStageDone, markStageRunning, patchStageMetrics } from "../stage-runs";
 import type { JobPayload, StageHandler } from "../types";
 import { context } from "@/lib/otel/tracer";
+import { otelLog } from "@/lib/otel/logger";
 
 async function readMetrics(
   wdb: Parameters<StageHandler>[1],
@@ -78,6 +79,14 @@ async function finishDedupe(
     mergesThisInvocation: undefined,
     multiClaimClustersPending: undefined,
     llmPending: undefined,
+  });
+  otelLog.info("dedupe stage done", {
+    scope: "pipeline",
+    bookId,
+    stage: "dedupe",
+    claimsBefore,
+    claimsAfter,
+    mergesPerformed,
   });
 }
 
@@ -329,6 +338,7 @@ export const dedupeStage: StageHandler = async (job, wdb, deadline) => {
   const bookId = job.bookId;
   const payload = (job.payload || {}) as JobPayload;
   await markStageRunning(wdb, bookId, "dedupe");
+  otelLog.info("dedupe stage running", { scope: "pipeline", bookId, stage: "dedupe" });
   const baseline = await ensureBaseline(wdb, bookId);
 
   // Phase A: embed any missing (large batches)
@@ -509,6 +519,15 @@ export const dedupeStage: StageHandler = async (job, wdb, deadline) => {
     simThreshold: SIM_THRESHOLD,
     autoMergeThreshold: AUTO_MERGE_THRESHOLD,
     model: mergeModels.merge,
+  });
+  otelLog.info("dedupe merge pass complete", {
+    scope: "pipeline",
+    bookId,
+    stage: "dedupe",
+    autoMerges,
+    llmMerges,
+    multiClaimClustersSeen: multi.length,
+    llmPending: Math.max(0, needsLlm.length - llmMerges),
   });
 
   // More borderline clusters left?

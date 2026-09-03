@@ -12,6 +12,7 @@ import { recordStageUsage } from "@/lib/llm/record-usage";
 import { markStageDone, markStageRunning, patchStageMetrics } from "../stage-runs";
 import type { JobPayload, StageHandler } from "../types";
 import { context } from "@/lib/otel/tracer";
+import { otelLog } from "@/lib/otel/logger";
 
 const STEP = 40;
 const CONCURRENCY = 4;
@@ -30,6 +31,7 @@ export const extractStage: StageHandler = async (job, wdb, deadline) => {
   const payload = (job.payload || {}) as JobPayload;
   const cursor = payload.cursor ?? 0;
   await markStageRunning(wdb, bookId, "extract");
+  otelLog.info("extract stage running", { scope: "pipeline", bookId, stage: "extract", cursor });
 
   const [book] = await wdb
     .select({ extractPrompt: books.extractPrompt })
@@ -59,6 +61,12 @@ export const extractStage: StageHandler = async (job, wdb, deadline) => {
       claimsKept: kept,
       model: models.extract,
       concurrency: CONCURRENCY,
+    });
+    otelLog.info("extract stage done", {
+      scope: "pipeline",
+      bookId,
+      stage: "extract",
+      claimsKept: kept,
     });
     return { bookId, stage: "dedupe", payload: {} } satisfies NewJob;
   }
@@ -172,14 +180,27 @@ export const extractStage: StageHandler = async (job, wdb, deadline) => {
   }
 
   const nextCursor = batch[batch.length - 1]!.chunkIndex + 1;
+  const dropRateBatch =
+    Math.round((dropped / Math.max(kept + dropped, 1)) * 1000) / 10;
   await patchStageMetrics(wdb, bookId, "extract", {
     chunksProcessedThrough: nextCursor,
     claimsKeptBatch: kept,
     claimsDroppedBatch: dropped,
-    dropRateBatch:
-      Math.round((dropped / Math.max(kept + dropped, 1)) * 1000) / 10,
+    dropRateBatch,
     model: activeModels.extract,
     concurrency: CONCURRENCY,
+  });
+  otelLog.info("extract batch complete", {
+    scope: "pipeline",
+    bookId,
+    stage: "extract",
+    batchSize: batch.length,
+    kept,
+    dropped,
+    dropRateBatch,
+    usageIn,
+    usageOut,
+    nextCursor,
   });
 
   const [more] = await wdb
@@ -208,6 +229,12 @@ export const extractStage: StageHandler = async (job, wdb, deadline) => {
     claimsDroppedApprox: dropped,
     model: activeModels.extract,
     concurrency: CONCURRENCY,
+  });
+  otelLog.info("extract stage done", {
+    scope: "pipeline",
+    bookId,
+    stage: "extract",
+    claimsKept: total,
   });
 
   return { bookId, stage: "dedupe", payload: {} } satisfies NewJob;

@@ -3,6 +3,7 @@ import { claims, concepts, type NewJob } from "@/db/schema";
 import { pickConceptDescription } from "@/lib/concept-description";
 import { markStageDone, markStageRunning } from "../stage-runs";
 import type { StageHandler } from "../types";
+import { otelLog } from "@/lib/otel/logger";
 
 const MIN_CLAIMS_BOOK = 8;
 /** Short PDFs (workshops, essays) rarely clear 8 — scale down honestly. */
@@ -97,6 +98,7 @@ async function backfillDefinitionOneLiners(
 export const conceptsStage: StageHandler = async (job, wdb) => {
   const bookId = job.bookId;
   await markStageRunning(wdb, bookId, "concepts");
+  otelLog.info("concepts stage running", { scope: "pipeline", bookId, stage: "concepts" });
   await wdb.delete(concepts).where(eq(concepts.bookId, bookId));
 
   const rows = await wdb
@@ -194,6 +196,13 @@ export const conceptsStage: StageHandler = async (job, wdb) => {
     conceptNodes: values.length,
     minClaims,
     minNodes,
+    liveClaims: rows.length,
+  });
+  otelLog.info("concepts stage done", {
+    scope: "pipeline",
+    bookId,
+    stage: "concepts",
+    conceptNodes: values.length,
     liveClaims: rows.length,
   });
 

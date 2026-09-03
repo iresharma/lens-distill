@@ -8,6 +8,7 @@ import { embedTexts, getClaudeClient } from "@/lib/llm/client";
 import { recordStageUsage } from "@/lib/llm/record-usage";
 import { markStageDone, markStageRunning } from "../stage-runs";
 import type { StageHandler } from "../types";
+import { otelLog } from "@/lib/otel/logger";
 
 const EMBED_BATCH = 100;
 const CLUSTER_THRESHOLD = 0.93;
@@ -111,6 +112,11 @@ function assertNoNegationCrossMerge(rawToCanonical: Map<string, string>) {
 export const canonicalizeStage: StageHandler = async (job, wdb) => {
   const bookId = job.bookId;
   await markStageRunning(wdb, bookId, "canonicalize");
+  otelLog.info("canonicalize stage running", {
+    scope: "pipeline",
+    bookId,
+    stage: "canonicalize",
+  });
 
   await wdb.delete(conceptVocab).where(eq(conceptVocab.bookId, bookId));
 
@@ -138,6 +144,13 @@ export const canonicalizeStage: StageHandler = async (job, wdb) => {
   const distinct = [...tagCounts.keys()];
   if (!distinct.length) {
     await markStageDone(wdb, bookId, "canonicalize", {
+      rawTagCount: 0,
+      canonicalTagCount: 0,
+    });
+    otelLog.info("canonicalize stage done", {
+      scope: "pipeline",
+      bookId,
+      stage: "canonicalize",
       rawTagCount: 0,
       canonicalTagCount: 0,
     });
@@ -280,6 +293,13 @@ export const canonicalizeStage: StageHandler = async (job, wdb) => {
     multiTagClusters: embedMerges,
     negationBlocks: 0,
     embedThreshold: CLUSTER_THRESHOLD,
+  });
+  otelLog.info("canonicalize stage done", {
+    scope: "pipeline",
+    bookId,
+    stage: "canonicalize",
+    rawTagCount: distinct.length,
+    canonicalTagCount: canonicalCount,
   });
 
   return { bookId, stage: "concepts", payload: {} } satisfies NewJob;

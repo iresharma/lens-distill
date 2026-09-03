@@ -4,6 +4,7 @@ import { embedTexts, MODELS } from "@/lib/llm/client";
 import { recordStageUsage } from "@/lib/llm/record-usage";
 import { markStageDone, markStageRunning, patchStageMetrics } from "../stage-runs";
 import type { JobPayload, StageHandler } from "../types";
+import { otelLog } from "@/lib/otel/logger";
 
 const BATCH = 100;
 
@@ -12,6 +13,7 @@ export const embedStage: StageHandler = async (job, wdb, deadline) => {
   const payload = (job.payload || {}) as JobPayload;
   const cursor = payload.cursor ?? 0;
   await markStageRunning(wdb, bookId, "embed");
+  otelLog.info("embed stage running", { scope: "pipeline", bookId, stage: "embed", cursor });
 
   const pending = await wdb
     .select()
@@ -49,6 +51,12 @@ export const embedStage: StageHandler = async (job, wdb, deadline) => {
       chunksEmbedded: total,
       batchSize: BATCH,
       model: MODELS.embed,
+    });
+    otelLog.info("embed stage done", {
+      scope: "pipeline",
+      bookId,
+      stage: "embed",
+      chunksEmbedded: total,
     });
 
     return {
@@ -90,6 +98,14 @@ export const embedStage: StageHandler = async (job, wdb, deadline) => {
     cursor: nextCursor,
     model: MODELS.embed,
   });
+  otelLog.info("embed batch complete", {
+    scope: "pipeline",
+    bookId,
+    stage: "embed",
+    batchSize: pending.length,
+    inputTokens,
+    nextCursor,
+  });
 
   if (Date.now() > deadline - 60_000) {
     return {
@@ -121,6 +137,12 @@ export const embedStage: StageHandler = async (job, wdb, deadline) => {
     chunksEmbedded: total,
     batchSize: BATCH,
     model: MODELS.embed,
+  });
+  otelLog.info("embed stage done", {
+    scope: "pipeline",
+    bookId,
+    stage: "embed",
+    chunksEmbedded: total,
   });
 
   return {

@@ -53,6 +53,14 @@ export async function drainPipeline(opts?: {
           if (!job) break;
           jobsClaimed.add(1, { stage: job.stage });
           const cursor = (job.payload as { cursor?: number } | null)?.cursor;
+          otelLog.info(`job claimed: ${job.stage}`, {
+            scope: "pipeline",
+            bookId: job.bookId,
+            stage: job.stage,
+            jobId: job.id,
+            attempts: job.attempts,
+            cursor,
+          });
           try {
             await withSpan(
               `pipeline.stage.${job.stage}`,
@@ -68,6 +76,13 @@ export async function drainPipeline(opts?: {
                 if (!handler) throw new Error(`Unknown stage: ${job.stage}`);
                 const next = await handler(job, wdb, deadline);
                 await completeJob(wdb, job.id, next, job.stage);
+                otelLog.info(`job completed: ${job.stage}`, {
+                  scope: "pipeline",
+                  bookId: job.bookId,
+                  stage: job.stage,
+                  jobId: job.id,
+                  next: next?.stage ?? null,
+                });
                 processed.push({
                   id: job.id,
                   stage: job.stage,

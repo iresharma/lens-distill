@@ -14,6 +14,7 @@ import { recordStageUsage } from "@/lib/llm/record-usage";
 import { markStageDone, markStageRunning } from "../stage-runs";
 import type { StageHandler } from "../types";
 import { pipelineBookDuration, pipelineBooksCompleted } from "@/lib/otel/meter";
+import { otelLog } from "@/lib/otel/logger";
 
 type EdgeRow = {
   concept_id: string;
@@ -102,6 +103,11 @@ async function breakPrerequisiteCycles(
 export const conceptGraphStage: StageHandler = async (job, wdb) => {
   const bookId = job.bookId;
   await markStageRunning(wdb, bookId, "concept_graph");
+  otelLog.info("concept_graph stage running", {
+    scope: "pipeline",
+    bookId,
+    stage: "concept_graph",
+  });
   await wdb.delete(conceptEdges).where(eq(conceptEdges.bookId, bookId));
 
   const nodes = await wdb
@@ -280,6 +286,14 @@ export const conceptGraphStage: StageHandler = async (job, wdb) => {
     model: activeModels.concepts,
     conceptCount: nodes.length,
   });
+  otelLog.info("concept_graph stage done", {
+    scope: "pipeline",
+    bookId,
+    stage: "concept_graph",
+    edgeCounts: counts,
+    coveragePct: Math.round(pct),
+    cyclesBroken,
+  });
 
   const readyAt = new Date();
   await wdb
@@ -291,8 +305,14 @@ export const conceptGraphStage: StageHandler = async (job, wdb) => {
     .select({ createdAt: books.createdAt })
     .from(books)
     .where(eq(books.bookId, bookId));
-  pipelineBookDuration.record(readyAt.getTime() - createdAt.getTime());
+  const durationMs = readyAt.getTime() - createdAt.getTime();
+  pipelineBookDuration.record(durationMs);
   pipelineBooksCompleted.add(1, { status: "ready" });
+  otelLog.info("book ready", {
+    scope: "pipeline",
+    bookId,
+    durationMs,
+  });
 
   // Terminal stage — no successor
   return null;
