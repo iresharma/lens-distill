@@ -1,4 +1,5 @@
 import { logs, SeverityNumber } from "@opentelemetry/api-logs";
+import { trace, isSpanContextValid } from "@opentelemetry/api";
 
 const otelLogger = logs.getLogger("lens-distill");
 
@@ -18,15 +19,53 @@ function flatten(attrs?: Attrs): Record<string, string | number | boolean> {
   return out;
 }
 
+/**
+ * JSON.stringify replacer: Errors serialize to name/message/stack instead of
+ * `{}`, BigInts don't throw, and circular refs degrade instead of crashing
+ * the logger itself.
+ */
+function safeReplacer() {
+  const seen = new WeakSet<object>();
+  return (_key: string, value: unknown) => {
+    if (value instanceof Error) {
+      return { name: value.name, message: value.message, stack: value.stack };
+    }
+    if (typeof value === "bigint") return value.toString();
+    if (typeof value === "object" && value !== null) {
+      if (seen.has(value)) return "[Circular]";
+      seen.add(value);
+    }
+    return value;
+  };
+}
+
 function emit(
   severityNumber: SeverityNumber,
   severityText: string,
-  consoleFn: (...args: unknown[]) => void,
+  level: string,
+  consoleFn: (line: string) => void,
   message: string,
   attrs?: Attrs,
 ) {
-  const scope = (attrs?.scope as string) || "app";
-  consoleFn(`[${scope}] ${message}`, attrs ?? "");
+  const { scope, ...rest } = attrs ?? {};
+  const spanContext = trace.getActiveSpan()?.spanContext();
+
+  const record: Record<string, unknown> = {
+    time: new Date().toISOString(),
+    level,
+    msg: message,
+    scope: (scope as string) || "app",
+    ...rest,
+  };
+  // Ties every log line back to the OTel trace for the request/pipeline run
+  // it was emitted during, so logs for one request can be grepped by ID.
+  if (spanContext && isSpanContextValid(spanContext)) {
+    record.trace_id = spanContext.traceId;
+    record.span_id = spanContext.spanId;
+  }
+
+  consoleFn(JSON.stringify(record, safeReplacer()));
+
   otelLogger.emit({
     severityNumber,
     severityText,
@@ -37,11 +76,11 @@ function emit(
 
 export const otelLog = {
   debug: (message: string, attrs?: Attrs) =>
-    emit(SeverityNumber.DEBUG, "DEBUG", console.debug, message, attrs),
+    emit(SeverityNumber.DEBUG, "DEBUG", "debug", console.debug, message, attrs),
   info: (message: string, attrs?: Attrs) =>
-    emit(SeverityNumber.INFO, "INFO", console.log, message, attrs),
+    emit(SeverityNumber.INFO, "INFO", "info", console.log, message, attrs),
   warn: (message: string, attrs?: Attrs) =>
-    emit(SeverityNumber.WARN, "WARN", console.warn, message, attrs),
+    emit(SeverityNumber.WARN, "WARN", "warn", console.warn, message, attrs),
   error: (message: string, attrs?: Attrs) =>
-    emit(SeverityNumber.ERROR, "ERROR", console.error, message, attrs),
+    emit(SeverityNumber.ERROR, "ERROR", "error", console.error, message, attrs),
 };

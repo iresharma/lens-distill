@@ -12,6 +12,19 @@ FROM base AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
+# sharp is only next's optional peer dep for the next/image optimizer route,
+# which this app never uses (no next/image import anywhere in src/) — drop it
+# entirely rather than just pruning its arch variants.
+RUN rm -rf node_modules/sharp node_modules/@img
+
+# npm's optional-dependency libc detection can pull in both the glibc and
+# musl native builds for @napi-rs/canvas even though this image only ever
+# runs the musl (Alpine) variant — strip the dead one. (@napi-rs/canvas
+# itself is load-bearing: pdfjs-dist's legacy Node build does `new
+# DOMMatrix()` at module scope and crashes without the polyfill it provides.)
+RUN find node_modules/@napi-rs -maxdepth 1 -type d \
+      \( -name '*-linux-*' -o -name '*-darwin-*' -o -name '*-win32-*' -o -name '*-android-*' -o -name '*-freebsd-*' \) \
+      ! -iname '*musl*' -exec rm -rf {} + 2>/dev/null || true
 
 # ---- Build ----
 FROM base AS builder
